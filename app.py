@@ -11,7 +11,7 @@ import random
 # 🌟 ページ設定
 # ----------------------------------------
 st.set_page_config(
-    page_title="Dot Blot 最適化ツール（最終版）",
+    page_title="Dot Blot 最適化ツール（speed up ver.）",
     page_icon="🧪",
     layout="wide"
 )
