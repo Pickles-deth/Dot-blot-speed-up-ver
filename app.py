@@ -20,7 +20,7 @@ st.set_page_config(
 # ヘッダー
 # ----------------------------------------
 st.markdown("""
-<h1 style='text-align:center; color:#2c3e50;'>🧪 Dot Blot 最適化ツール（最終版）</h1>
+<h1 style='text-align:center; color:#2c3e50;'>🧪 Dot Blot 最適化ツール（speed up ver.）</h1>
 <p style='text-align:center; color:gray; font-size:18px;'>
 条件Aを100基準に正規化し、最小SD構成を探索します。<br>
 丸めなし・サンプル順序無視・再試行機能付き。
