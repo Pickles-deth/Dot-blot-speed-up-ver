@@ -3,3 +3,5 @@ numpy
 openpyxl
 pandas
 joblib
+matplotlib
+
