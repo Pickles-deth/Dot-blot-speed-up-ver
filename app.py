@@ -6,17 +6,18 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 import random
+import matplotlib.pyplot as plt
 
 # ----------------------------------------
 # 🌟 ページ設定
 # ----------------------------------------
-st.set_page_config(page_title="Dot Blot 最適化ツール（高速条件付き版）", page_icon="🧪", layout="wide")
+st.set_page_config(page_title="Dot Blot 最適化ツール（統計付き高速版）", page_icon="🧪", layout="wide")
 
 st.markdown("""
-<h1 style='text-align:center; color:#2c3e50;'>🧪 Dot Blot 最適化ツール（高速条件付き版）</h1>
+<h1 style='text-align:center; color:#2c3e50;'>🧪 Dot Blot 最適化ツール（統計付き高速版）</h1>
 <p style='text-align:center; color:gray; font-size:18px;'>
-条件Aを100基準に正規化し、元のSDより改善された組み合わせのみを抽出します<br>
-サンプルの区別なし・丸め処理なし
+条件Aを100基準に正規化し、基準SDより改善された組み合わせのみ抽出<br>
+処理時間を短縮しつつ、全体の改善統計も表示します
 </p>
 <hr style='border:1px solid #eee;'>
 """, unsafe_allow_html=True)
@@ -78,7 +79,7 @@ if st.button("🚀 計算を実行する", use_container_width=True, type="prima
     labels = list(nonzero_data.keys())
     st.info(f"✅ 使用サンプル数 k = {k} / 各条件の非ゼロ数: {counts}")
 
-    # 並べ替えを部分的に抽出（準網羅）
+    # 準網羅サンプリング
     row_perms_list = [
         random.sample(list(itertools.permutations(v, k)), min(subset_n, len(list(itertools.permutations(v, k)))))
         for v in nonzero_data.values()
@@ -87,17 +88,17 @@ if st.button("🚀 計算を実行する", use_container_width=True, type="prima
     st.write(f"理論上の全組み合わせ数: {int(total_combinations):,} 通り")
 
     # ----------------------------------------
-    # 🧮 基準SD計算
+    # 🧮 基準SD（バグ修正版）
     # ----------------------------------------
     baseline_sum_sd, baseline_sds, baseline_means, _ = calc_sum_sd_from_columns(
-        [tuple(nonzero_data[k][:k]) for k in labels], labels
+        [tuple(nonzero_data[label][:k]) for label in labels], labels
     )
     st.write(f"🔹 基準構成の Sum_SD = {baseline_sum_sd:.3f}")
 
     # ----------------------------------------
-    # 🚀 探索開始
+    # 🚀 探索
     # ----------------------------------------
-    seen, results = {}, []
+    seen, improved, all_sds = {}, [], []
     progress = st.progress(0)
     checked = 0
     total = int(total_combinations)
@@ -114,37 +115,51 @@ if st.button("🚀 計算を実行する", use_container_width=True, type="prima
         seen[key] = True
 
         sum_sd, sds, means, norm_cols = calc_sum_sd_from_columns(cols, labels)
-        if sum_sd < baseline_sum_sd:  # ←改善されたものだけ保存
-            results.append({
+        all_sds.append(sum_sd)
+        if sum_sd < baseline_sum_sd:
+            improved.append({
                 "sum_sd": sum_sd, "sds": sds, "means": means,
                 "columns": cols, "norm_cols": norm_cols
             })
 
     progress.empty()
-    st.success(f"🎉 計算完了！ 重複除外後の実際の組み合わせ数: {len(results):,}")
+
+    # ----------------------------------------
+    # 📈 統計出力
+    # ----------------------------------------
+    improved_ratio = (len(improved) / len(all_sds) * 100) if all_sds else 0
+    st.success(f"🎉 計算完了！\n\n💾 探索済み組み合わせ数: {len(all_sds):,}\n"
+               f"✨ 改善構成数: {len(improved):,}（{improved_ratio:.2f}%）")
+
+    # 分布ヒストグラム
+    fig, ax = plt.subplots()
+    ax.hist(all_sds, bins=30, alpha=0.5, label="全構成", color="gray")
+    ax.axvline(baseline_sum_sd, color="red", linestyle="--", label="基準SD")
+    if improved:
+        ax.hist([r["sum_sd"] for r in improved], bins=30, alpha=0.7, color="skyblue", label="改善構成")
+    ax.legend(); ax.set_xlabel("Sum_SD"); ax.set_ylabel("Frequency")
+    st.pyplot(fig)
 
     # ----------------------------------------
     # 🏆 結果表示
     # ----------------------------------------
-    results.sort(key=lambda x: x["sum_sd"])
-    topn = min(10, len(results))
+    improved.sort(key=lambda x: x["sum_sd"])
+    topn = min(10, len(improved))
     sample_labels = [f"Sample{i+1}" for i in range(k)]
 
-    for i, r in enumerate(results[:topn]):
+    for i, r in enumerate(improved[:topn]):
         with st.expander(f"🏅 Rank {i+1} — Sum_SD: {r['sum_sd']:.6f}"):
             st.write(f"**SDs:** {', '.join(f'{v:.3f}' for v in r['sds'])}")
             st.write(f"**Means:** {', '.join(f'{v:.3f}' for v in r['means'])}")
-
             df_raw = pd.DataFrame(r["columns"], columns=sample_labels, index=labels)
             df_norm = pd.DataFrame(r["norm_cols"], columns=sample_labels, index=labels)
-
             st.markdown("**Raw 値（行=条件 / 列=サンプル）**")
             st.dataframe(df_raw.style.format(precision=3), use_container_width=True)
             st.markdown("**Normalized（条件A=100基準）**")
             st.dataframe(df_norm.style.format(precision=3), use_container_width=True)
 
     # ----------------------------------------
-    # 📈 Excel出力
+    # 📤 Excel出力
     # ----------------------------------------
     wb = Workbook()
     ws = wb.active
@@ -155,7 +170,10 @@ if st.button("🚀 計算を実行する", use_container_width=True, type="prima
         "Sum_SD": round(r["sum_sd"], 6),
         "SDs": ", ".join([f"{v:.3f}" for v in r["sds"]]),
         "Means": ", ".join([f"{v:.3f}" for v in r["means"]])
-    } for i, r in enumerate(results[:topn])])
+    } for i, r in enumerate(improved[:topn])])
+
+    df_export.loc[len(df_export.index)] = ["---", "---", "---", "---"]
+    df_export.loc[len(df_export.index)] = ["改善構成数", len(improved), "改善率(%)", f"{improved_ratio:.2f}"]
 
     for row in dataframe_to_rows(df_export, index=False, header=True):
         ws.append(row)
@@ -167,9 +185,9 @@ if st.button("🚀 計算を実行する", use_container_width=True, type="prima
     st.download_button(
         "⬇️ Excelで結果をダウンロード",
         output,
-        file_name="DotBlot_Improved.xlsx",
+        file_name="DotBlot_Improved_Stats.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
 
-    st.markdown("<h3 style='text-align:center; color:#ff66b2;'>✨ あはは、できちゃった ✨</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align:center; color:#ff66b2;'>✨ あはは、できちゃった（統計付き）✨</h3>", unsafe_allow_html=True)
