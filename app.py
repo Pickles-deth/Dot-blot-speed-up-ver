@@ -105,7 +105,7 @@ if run:
     # ----------------------------------------
     # 基準構成
     # ----------------------------------------
-    base_cols = [tuple(nonzero_data[k][:k]) for k in labels]
+    base_cols = [tuple(nonzero_data[label][:k]) for label in labels]
     baseline_sum_sd, _, _, _ = calc_sum_sd_from_columns(base_cols)
     st.write(f"📏 基準 Sum_SD: **{baseline_sum_sd:.6f}**")
 
