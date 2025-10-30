@@ -66,8 +66,7 @@ if run:
         base = df_norm.iloc[0]  # 条件A（先頭行）
         df_norm = df_norm.divide(base, axis=1) * 100.0
         return df_norm.fillna(0.0)
- 
-    def calc_sum_sd_from_columns(columns, labels):
+        def calc_sum_sd_from_columns(columns, labels):
     """columns: 各サンプル列のタプル (A_i, B_i, C_i, D_i, ...)"""
     # 行=条件 / 列=サンプルに変換
     sample_labels = [f"Sample{i+1}" for i in range(len(columns))]
