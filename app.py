@@ -10,7 +10,7 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 # 🌟 ページ設定
 # ----------------------------------------
 st.set_page_config(
-    page_title="Dot Blot 最適化ツール（最終安定版）",
+    page_title="Dot Blot 最適化ツール（最終版 v3）",
     page_icon="🧪",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -18,10 +18,10 @@ st.set_page_config(
 
 st.image("logo.png", width=150)
 st.markdown("""
-<h1 style='text-align:center; color:#2c3e50;'>🧪 Dot Blot 最適化ツール（最終安定版）</h1>
+<h1 style='text-align:center; color:#2c3e50;'>🧪 Dot Blot 最適化ツール（最終版 v3）</h1>
 <p style='text-align:center; color:gray; font-size:18px;'>
-サンプル順序を無視して最小SD構成を探索します<br>
-条件Aを常に100基準で正規化します
+条件Aを100基準に正規化し、サンプル順序を無視して最小SD構成を探索します<br>
+丸め処理なし・重複構造除外済み
 </p>
 <hr style='border:1px solid #eee;'>
 """, unsafe_allow_html=True)
@@ -49,42 +49,45 @@ for i in range(num_rows):
             st.warning(f"{key}の入力を確認してください。")
 
 # ----------------------------------------
-# 🚀 実行
+# 🚀 実行ボタン
 # ----------------------------------------
 run = st.button("🚀 計算を実行する", use_container_width=True, type="primary")
 
 if run:
+    # ----------------------------------------
+    # 🧠 内部関数
+    # ----------------------------------------
     def nonzero_list(row):
         return [v for v in row if v != 0.0]
 
     def normalize_by_A(df):
-        df_norm = df.copy()
-        base = df.iloc[0]  # 条件Aの値を基準に
-        for col in df.columns:
-            df_norm[col] = (df[col] / base[col]) * 100 if base[col] != 0 else np.nan
-        return df_norm
+        """条件A行を100基準に正規化"""
+        df_norm = df.copy().astype(float)
+        base = df_norm.iloc[0]  # 条件A（先頭行）
+        df_norm = df_norm.divide(base, axis=1) * 100.0
+        return df_norm.fillna(0.0)
 
-    def calc_sum_sd_from_columns(columns):
-        df_raw = pd.DataFrame(columns)
+    def calc_sum_sd_from_columns(columns, labels):
+        """
+        columns: 各サンプル列のタプル (A_i, B_i, C_i, D_i, ...)
+        """
+        # 行=条件 / 列=サンプルに変換
+        df_raw = pd.DataFrame(columns, columns=labels).T
         df_norm = normalize_by_A(df_raw)
-        rows = list(zip(*df_norm.values))
-        sds, means = [], []
-        for r in rows:
-            arr = np.array([x for x in r if not np.isnan(x)])
-            if arr.size == 0:
-                means.append(0.0); sds.append(0.0)
-            elif arr.size == 1:
-                means.append(float(arr[0])); sds.append(0.0)
-            else:
-                means.append(float(np.mean(arr)))
-                sds.append(float(np.std(arr, ddof=1)))
-        return sum(sds), sds, means, df_raw, df_norm
+
+        # 各条件(行)ごとの平均とSD（サンプル方向）
+        means = df_norm.mean(axis=1).tolist()
+        sds = df_norm.std(axis=1, ddof=1).fillna(0.0).tolist()
+        sum_sd = float(np.sum(sds))
+
+        return sum_sd, sds, means, df_raw, df_norm
 
     def canonicalize_columns(cols):
-        return tuple(sorted(tuple(c) for c in cols))  # サンプル順序を無視
+        """サンプル順序を無視して同型構造を統一"""
+        return tuple(sorted(tuple(c) for c in cols))
 
     # ----------------------------------------
-    # 前処理
+    # 📊 前処理
     # ----------------------------------------
     nonzero_data = {k: nonzero_list(v) for k, v in data.items()}
     counts = [len(v) for v in nonzero_data.values()]
@@ -100,6 +103,7 @@ if run:
     results = []
     progress = st.progress(0)
     checked = 0
+    labels = list(nonzero_data.keys())
 
     for perm_set in itertools.product(*row_perms_list):
         checked += 1
@@ -114,11 +118,14 @@ if run:
         if key in seen:
             continue
 
-        sum_sd, sds, means, df_raw, df_norm = calc_sum_sd_from_columns(cols)
+        sum_sd, sds, means, df_raw, df_norm = calc_sum_sd_from_columns(cols, labels)
         seen[key] = True
         results.append({
-            'sum_sd': sum_sd, 'sds': sds, 'means': means,
-            'raw': df_raw, 'norm': df_norm
+            'sum_sd': sum_sd,
+            'sds': sds,
+            'means': means,
+            'raw': df_raw,
+            'norm': df_norm
         })
 
     progress.empty()
@@ -131,15 +138,16 @@ if run:
     # ----------------------------------------
     st.markdown("### 🏆 上位10組み合わせ（Sum_SD昇順）")
     topn = min(10, len(results))
-    labels = list(nonzero_data.keys())
 
     for i in range(topn):
         r = results[i]
         st.subheader(f"🏅 Rank {i+1} — Sum_SD: {r['sum_sd']:.6f}")
         st.write(f"**SDs:** {', '.join(f'{v:.3f}' for v in r['sds'])}")
         st.write(f"**Means:** {', '.join(f'{v:.3f}' for v in r['means'])}")
-        st.write("**Raw 値:**")
+
+        st.write("**Raw 値（行=条件 / 列=サンプル）:**")
         st.dataframe(r["raw"].style.format(precision=3), use_container_width=True)
+
         st.write("**Normalized（条件A=100基準）:**")
         st.dataframe(r["norm"].style.format(precision=3), use_container_width=True)
 
@@ -167,9 +175,9 @@ if run:
     st.download_button(
         "⬇️ Excel で結果をダウンロード",
         output,
-        file_name="DotBlot_Final_v2.xlsx",
+        file_name="DotBlot_Final_v3.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
 
-    st.markdown("<h2 style='text-align:center; color:#ff66b2;'>✨ 条件A基準の最終版が完成しました ✨</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align:center; color:#ff66b2;'>✨ ahahahaha！できたよ ✨</h2>", unsafe_allow_html=True)
