@@ -72,7 +72,11 @@ if run:
         columns: 各サンプル列のタプル (A_i, B_i, C_i, D_i, ...)
         """
         # 行=条件 / 列=サンプルに変換
-        df_raw = pd.DataFrame(columns, columns=labels).T
+        # サンプル列を "Sample1", "Sample2", ... に
+　　　　sample_labels = [f"Sample{i+1}" for i in range(len(columns))]
+　　　　df_raw = pd.DataFrame(columns, columns=labels).T
+　　　　df_raw.columns = sample_labels
+
         df_norm = normalize_by_A(df_raw)
 
         # 各条件(行)ごとの平均とSD（サンプル方向）
