@@ -25,8 +25,8 @@ st.image("logo.png", width=150)
 st.markdown("""
 <h1 style='text-align:center; color:#2c3e50;'>🧪 Dot Blot 最適化ツール</h1>
 <p style='text-align:center; color:gray; font-size:18px;'>
-行内シャッフルによる最小SD構成を自動で探索します<br>
-0は自動的に除外されます
+条件ごとのシャッフルにより最小SD構成を探索します<br>
+条件（A〜D）ごとにサンプルの値を入力してください
 </p>
 <hr style='border:1px solid #eee;'>
 """, unsafe_allow_html=True)
@@ -35,22 +35,22 @@ st.markdown("""
 # 📥 入力
 # ----------------------------------------
 st.sidebar.header("⚙️ 設定")
-num_rows = st.sidebar.number_input("行の数（例：4）", min_value=1, max_value=10, value=4)
-num_cols = st.sidebar.number_input("列の数（例：4）", min_value=1, max_value=10, value=4)
+num_rows = st.sidebar.number_input("条件の数（例：4）", min_value=1, max_value=10, value=4)
+num_cols = st.sidebar.number_input("サンプル数（例：5）", min_value=1, max_value=10, value=5)
 st.sidebar.markdown("---")
-st.sidebar.info("各行にカンマ区切りで数値を入力してください。")
+st.sidebar.info("各条件にカンマ区切りでサンプル値を入力してください。")
 
 data = {}
-st.markdown("### ✏️ データ入力")
+st.markdown("### ✏️ データ入力（例：1.4, 1.2, 1.3, 0.5, 0）")
 cols = st.columns(2)
 for i in range(num_rows):
     key = chr(65 + i)
     with cols[i % 2]:
-        values = st.text_input(f"🔹 {key} 行の値", "1.0, 1.0, 1.0, 0")
+        values = st.text_input(f"🔹 条件 {key}", "1.0, 1.0, 1.0, 1.0, 0")
         try:
             data[key] = [float(v.strip()) for v in values.split(",")]
         except:
-            st.warning(f"{key}行の入力を確認してください。")
+            st.warning(f"条件 {key} の入力を確認してください。")
 
 # ----------------------------------------
 # 🚀 実行ボタン
@@ -63,14 +63,22 @@ if run:
         return [v for v in row if v != 0.0]
 
     def normalize_columns(columns):
-        base_val = columns[0, :]
-        base_val[base_val == 0] = np.nan
-        normalized = columns / base_val * 100
-        normalized[np.isnan(normalized)] = 0
+        """
+        各サンプル（列）ごとに条件Aを100基準で正規化
+        columns: ndarray shape (条件数, サンプル数)
+        """
+        normalized = np.zeros_like(columns, dtype=float)
+        base_vals = columns[0, :]  # 条件A（行0）の値を基準にする
+        for j in range(columns.shape[1]):  # 各サンプル列ごとに正規化
+            base = base_vals[j]
+            if base == 0:
+                normalized[:, j] = 0
+            else:
+                normalized[:, j] = columns[:, j] / base * 100
         return normalized
 
     def calc_sum_sd(columns):
-        """columns: ndarray shape (k, n_rows)"""
+        """columns: ndarray shape (条件数, サンプル数)"""
         normalized = normalize_columns(columns)
         means = np.nanmean(normalized, axis=1)
         sds = np.nanstd(normalized, axis=1, ddof=1)
@@ -86,13 +94,12 @@ if run:
     total_combinations = np.prod([len(p) for p in row_perms_list])
     st.write(f"全組み合わせ数: **{int(total_combinations):,}** 通り")
 
-    # ---------- 並列処理による計算 ----------
     labels = list(nonzero_data.keys())
 
+    # ---------- 並列処理 ----------
     def process_perm_set(idx_tuple):
-        """単一パターンのSDを計算"""
         perm_indices = np.array(idx_tuple)
-        columns = np.vstack([row_perms_list[r][i] for r, i in enumerate(perm_indices)]).T
+        columns = np.vstack([row_perms_list[r][i] for r, i in enumerate(perm_indices)])
         if np.any(columns == 0):
             return None
         arr_hash = hash(columns.tobytes())
@@ -103,7 +110,6 @@ if run:
     seen = set()
     results = []
 
-    # 並列化
     total = int(total_combinations)
     chunk_size = max(total // 100, 1000)
 
@@ -123,9 +129,11 @@ if run:
             delayed(process_perm_set)(perm_set) for perm_set in chunk
         )
         for r in res_chunk:
-            if r is None: continue
+            if r is None:
+                continue
             h, (sum_sd, sds, means, norm_cols) = r
-            if h in seen: continue
+            if h in seen:
+                continue
             seen.add(h)
             results.append({
                 'sum_sd': sum_sd, 'sds': sds, 'means': means, 'columns': norm_cols
@@ -147,7 +155,7 @@ if run:
         with st.expander(f"🏅 Rank {i+1} — Sum_SD: {r['sum_sd']:.4f}"):
             st.write(f"**SDs:** {', '.join(f'{v:.3f}' for v in r['sds'])}")
             st.write(f"**Means:** {', '.join(f'{v:.3f}' for v in r['means'])}")
-            df_cols = pd.DataFrame(r["columns"], columns=labels)
+            df_cols = pd.DataFrame(r["columns"], index=labels).T
             styled_df = df_cols.style.format(precision=3)
             for j, label in enumerate(labels):
                 styled_df = styled_df.set_properties(
@@ -198,4 +206,4 @@ if run:
         use_container_width=True
     )
 
-    st.markdown("<h2 style='text-align:center; color:#ff66b2;'>✨ ahaha! できちゃったよ ✨</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align:center; color:#ff66b2;'>✨ ahaha!できちゃったよ ✨</h2>", unsafe_allow_html=True)
