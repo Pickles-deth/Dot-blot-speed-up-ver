@@ -1,193 +1,27 @@
-import streamlit as st
-import numpy as np
-import itertools
-import pandas as pd
-from io import BytesIO
-from openpyxl import Workbook
-from openpyxl.utils.dataframe import dataframe_to_rows
-import random
-import matplotlib.pyplot as plt
+# 探索1回目
+improved = [r for r in results if r['sum_sd'] < baseline_sum_sd]
 
-# ----------------------------------------
-# 🌟 ページ設定
-# ----------------------------------------
-st.set_page_config(page_title="Dot Blot 最適化ツール（統計付き高速版）", page_icon="🧪", layout="wide")
+if not improved:
+    st.warning("⚠️ 改善構成が見つからなかったため、残りの組み合わせで再試行します。")
 
-st.markdown("""
-<h1 style='text-align:center; color:#2c3e50;'>🧪 Dot Blot 最適化ツール（統計付き高速版）</h1>
-<p style='text-align:center; color:gray; font-size:18px;'>
-条件Aを100基準に正規化し、基準SDより改善された組み合わせのみ抽出<br>
-処理時間を短縮しつつ、全体の改善統計も表示します
-</p>
-<hr style='border:1px solid #eee;'>
-""", unsafe_allow_html=True)
+    remaining_perms = []
+    for row, perms in zip(nonzero_data.keys(), full_permutation_list):
+        used = set(row_perms_list[nonzero_data.keys().index(row)])
+        remain = [p for p in perms if p not in used]
+        remaining_perms.append(remain)
 
-# ----------------------------------------
-# 📥 入力エリア
-# ----------------------------------------
-st.sidebar.header("⚙️ 設定")
-num_rows = st.sidebar.number_input("条件（行）の数", min_value=2, max_value=10, value=4)
-num_cols = st.sidebar.number_input("サンプル数（列）の数", min_value=2, max_value=10, value=5)
-subset_n = st.sidebar.slider("各条件の並べ替え数（高速化）", 1, 120, 20)
-st.sidebar.markdown("---")
-st.sidebar.info("各条件ごとにカンマ区切りでサンプル値を入力してください。")
-
-data = {}
-cols = st.columns(2)
-for i in range(num_rows):
-    key = chr(65 + i)
-    with cols[i % 2]:
-        values = st.text_input(f"🔹 {key}（条件{i+1}）の値", "1.0, 1.0, 1.0, 1.0, 1.0")
-        try:
-            data[key] = [float(v.strip()) for v in values.split(",")]
-        except:
-            st.warning(f"{key}の入力を確認してください。")
-
-# ----------------------------------------
-# 🚀 実行
-# ----------------------------------------
-if st.button("🚀 計算を実行する", use_container_width=True, type="primary"):
-
-    def nonzero_list(row):
-        return [v for v in row if v != 0.0]
-
-    def normalize_columns(columns):
-        """条件Aを基準に100正規化"""
-        ref = np.array(columns[0])
-        normalized = []
-        for col in columns:
-            norm = np.where(ref != 0, col / ref * 100, np.nan)
-            normalized.append(tuple(norm))
-        return normalized
-
-    def calc_sum_sd_from_columns(columns, labels):
-        norm_cols = normalize_columns(columns)
-        rows = list(zip(*norm_cols))
-        sds, means = [], []
-        for r in rows:
-            arr = np.array([x for x in r if not np.isnan(x)])
-            means.append(float(np.mean(arr)))
-            sds.append(float(np.std(arr, ddof=1)) if len(arr) > 1 else 0.0)
-        return sum(sds), sds, means, norm_cols
-
-    # ----------------------------------------
-    # 📊 前処理
-    # ----------------------------------------
-    nonzero_data = {k: nonzero_list(v) for k, v in data.items()}
-    counts = [len(v) for v in nonzero_data.values()]
-    k = min(counts)
-    labels = list(nonzero_data.keys())
-    st.info(f"✅ 使用サンプル数 k = {k} / 各条件の非ゼロ数: {counts}")
-
-    # 準網羅サンプリング
-    row_perms_list = [
-        random.sample(list(itertools.permutations(v, k)), min(subset_n, len(list(itertools.permutations(v, k)))))
-        for v in nonzero_data.values()
-    ]
-    total_combinations = np.prod([len(p) for p in row_perms_list])
-    st.write(f"理論上の全組み合わせ数: {int(total_combinations):,} 通り")
-
-    # ----------------------------------------
-    # 🧮 基準SD（バグ修正版）
-    # ----------------------------------------
-    baseline_sum_sd, baseline_sds, baseline_means, _ = calc_sum_sd_from_columns(
-        [tuple(nonzero_data[label][:k]) for label in labels], labels
-    )
-    st.write(f"🔹 基準構成の Sum_SD = {baseline_sum_sd:.3f}")
-
-    # ----------------------------------------
-    # 🚀 探索
-    # ----------------------------------------
-    seen, improved, all_sds = {}, [], []
-    progress = st.progress(0)
-    checked = 0
-    total = int(total_combinations)
-
-    for perm_set in itertools.product(*row_perms_list):
-        checked += 1
-        if checked % 500 == 0:
-            progress.progress(min(checked / total, 1.0))
-
+    # 再探索（2回目）
+    for perm_set in itertools.product(*remaining_perms):
         cols = [tuple(perm[i] for perm in perm_set) for i in range(k)]
-        key = tuple(sorted(tuple(round(x, 5) for x in col) for col in cols))
+        key = canonicalize_columns(cols)
         if key in seen:
             continue
+        sum_sd, sds, means, norm_cols = calc_sum_sd_from_columns(cols)
         seen[key] = True
-
-        sum_sd, sds, means, norm_cols = calc_sum_sd_from_columns(cols, labels)
-        all_sds.append(sum_sd)
         if sum_sd < baseline_sum_sd:
-            improved.append({
-                "sum_sd": sum_sd, "sds": sds, "means": means,
-                "columns": cols, "norm_cols": norm_cols
-            })
+            improved.append({'sum_sd': sum_sd, 'sds': sds, 'means': means, 'columns': cols, 'norm_cols': norm_cols})
 
-    progress.empty()
-
-    # ----------------------------------------
-    # 📈 統計出力
-    # ----------------------------------------
-    improved_ratio = (len(improved) / len(all_sds) * 100) if all_sds else 0
-    st.success(f"🎉 計算完了！\n\n💾 探索済み組み合わせ数: {len(all_sds):,}\n"
-               f"✨ 改善構成数: {len(improved):,}（{improved_ratio:.2f}%）")
-
-    # 分布ヒストグラム
-    fig, ax = plt.subplots()
-    ax.hist(all_sds, bins=30, alpha=0.5, label="全構成", color="gray")
-    ax.axvline(baseline_sum_sd, color="red", linestyle="--", label="基準SD")
-    if improved:
-        ax.hist([r["sum_sd"] for r in improved], bins=30, alpha=0.7, color="skyblue", label="改善構成")
-    ax.legend(); ax.set_xlabel("Sum_SD"); ax.set_ylabel("Frequency")
-    st.pyplot(fig)
-
-    # ----------------------------------------
-    # 🏆 結果表示
-    # ----------------------------------------
-    improved.sort(key=lambda x: x["sum_sd"])
-    topn = min(10, len(improved))
-    sample_labels = [f"Sample{i+1}" for i in range(k)]
-
-    for i, r in enumerate(improved[:topn]):
-        with st.expander(f"🏅 Rank {i+1} — Sum_SD: {r['sum_sd']:.6f}"):
-            st.write(f"**SDs:** {', '.join(f'{v:.3f}' for v in r['sds'])}")
-            st.write(f"**Means:** {', '.join(f'{v:.3f}' for v in r['means'])}")
-            df_raw = pd.DataFrame(r["columns"], columns=sample_labels, index=labels)
-            df_norm = pd.DataFrame(r["norm_cols"], columns=sample_labels, index=labels)
-            st.markdown("**Raw 値（行=条件 / 列=サンプル）**")
-            st.dataframe(df_raw.style.format(precision=3), use_container_width=True)
-            st.markdown("**Normalized（条件A=100基準）**")
-            st.dataframe(df_norm.style.format(precision=3), use_container_width=True)
-
-    # ----------------------------------------
-    # 📤 Excel出力
-    # ----------------------------------------
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Improved Results"
-
-    df_export = pd.DataFrame([{
-        "Rank": i + 1,
-        "Sum_SD": round(r["sum_sd"], 6),
-        "SDs": ", ".join([f"{v:.3f}" for v in r["sds"]]),
-        "Means": ", ".join([f"{v:.3f}" for v in r["means"]])
-    } for i, r in enumerate(improved[:topn])])
-
-    df_export.loc[len(df_export.index)] = ["---", "---", "---", "---"]
-    df_export.loc[len(df_export.index)] = ["改善構成数", len(improved), "改善率(%)", f"{improved_ratio:.2f}"]
-
-    for row in dataframe_to_rows(df_export, index=False, header=True):
-        ws.append(row)
-
-    output = BytesIO()
-    wb.save(output)
-    output.seek(0)
-
-    st.download_button(
-        "⬇️ Excelで結果をダウンロード",
-        output,
-        file_name="DotBlot_Improved_Stats.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
-
-    st.markdown("<h3 style='text-align:center; color:#ff66b2;'>✨ あはは、できちゃった（統計付き）✨</h3>", unsafe_allow_html=True)
+if not improved:
+    st.warning("⚠️ それでも改善構成は見つかりませんでした。最小SD構成を出力します。")
+    best = sorted(results, key=lambda x: x["sum_sd"])[0]
+    improved = [best]
