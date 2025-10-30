@@ -67,24 +67,22 @@ if run:
         df_norm = df_norm.divide(base, axis=1) * 100.0
         return df_norm.fillna(0.0)
 
-    def calc_sum_sd_from_columns(columns, labels):
-        """
-        columns: 各サンプル列のタプル (A_i, B_i, C_i, D_i, ...)
-        """
-        # 行=条件 / 列=サンプルに変換
-        # サンプル列を "Sample1", "Sample2", ... に
-　　　　sample_labels = [f"Sample{i+1}" for i in range(len(columns))]
-　　　　df_raw = pd.DataFrame(columns, columns=labels).T
-　　　　df_raw.columns = sample_labels
+   def calc_sum_sd_from_columns(columns, labels):
+    """columns: 各サンプル列のタプル (A_i, B_i, C_i, D_i, ...)"""
+    # 行=条件 / 列=サンプルに変換
+    sample_labels = [f"Sample{i+1}" for i in range(len(columns))]
+    df_raw = pd.DataFrame(columns, columns=labels).T
+    df_raw.columns = sample_labels
 
-        df_norm = normalize_by_A(df_raw)
+    df_norm = normalize_by_A(df_raw)
 
-        # 各条件(行)ごとの平均とSD（サンプル方向）
-        means = df_norm.mean(axis=1).tolist()
-        sds = df_norm.std(axis=1, ddof=1).fillna(0.0).tolist()
-        sum_sd = float(np.sum(sds))
+    # 各条件(行)ごとの平均とSD（サンプル方向）
+    means = df_norm.mean(axis=1).tolist()
+    sds = df_norm.std(axis=1, ddof=1).fillna(0.0).tolist()
+    sum_sd = float(np.sum(sds))
 
-        return sum_sd, sds, means, df_raw, df_norm
+    return sum_sd, sds, means, df_raw, df_norm
+
 
     def canonicalize_columns(cols):
         """サンプル順序を無視して同型構造を統一"""
