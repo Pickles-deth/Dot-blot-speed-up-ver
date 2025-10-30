@@ -10,7 +10,7 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 # 🌟 ページ設定
 # ----------------------------------------
 st.set_page_config(
-    page_title="Dot Blot 最適化ツール（最終版）",
+    page_title="Dot Blot 最適化ツール（最終安定版）",
     page_icon="🧪",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -18,10 +18,10 @@ st.set_page_config(
 
 st.image("logo.png", width=150)
 st.markdown("""
-<h1 style='text-align:center; color:#2c3e50;'>🧪 Dot Blot 最適化ツール（最終版）</h1>
+<h1 style='text-align:center; color:#2c3e50;'>🧪 Dot Blot 最適化ツール（最終安定版）</h1>
 <p style='text-align:center; color:gray; font-size:18px;'>
-サンプル順序の違いを無視して最小SD構成を探索します<br>
-丸め処理は行いません（完全一致比較）
+サンプル順序を無視して最小SD構成を探索します<br>
+条件Aを常に100基準で正規化します
 </p>
 <hr style='border:1px solid #eee;'>
 """, unsafe_allow_html=True)
@@ -57,19 +57,17 @@ if run:
     def nonzero_list(row):
         return [v for v in row if v != 0.0]
 
-    def normalize_columns(columns):
-        normalized = []
-        for col in columns:
-            base_val = col[0]
-            if base_val == 0:
-                normalized.append(tuple(0.0 for _ in col))
-                continue
-            normalized.append(tuple((v / base_val * 100) for v in col))
-        return normalized
+    def normalize_by_A(df):
+        df_norm = df.copy()
+        base = df.iloc[0]  # 条件Aの値を基準に
+        for col in df.columns:
+            df_norm[col] = (df[col] / base[col]) * 100 if base[col] != 0 else np.nan
+        return df_norm
 
     def calc_sum_sd_from_columns(columns):
-        norm_cols = normalize_columns(columns)
-        rows = list(zip(*norm_cols))
+        df_raw = pd.DataFrame(columns)
+        df_norm = normalize_by_A(df_raw)
+        rows = list(zip(*df_norm.values))
         sds, means = [], []
         for r in rows:
             arr = np.array([x for x in r if not np.isnan(x)])
@@ -80,10 +78,10 @@ if run:
             else:
                 means.append(float(np.mean(arr)))
                 sds.append(float(np.std(arr, ddof=1)))
-        return sum(sds), sds, means, norm_cols
+        return sum(sds), sds, means, df_raw, df_norm
 
     def canonicalize_columns(cols):
-        return tuple(sorted(tuple(c) for c in cols))  # サンプル順序無視
+        return tuple(sorted(tuple(c) for c in cols))  # サンプル順序を無視
 
     # ----------------------------------------
     # 前処理
@@ -96,7 +94,7 @@ if run:
 
     row_perms_list = [list(itertools.permutations(v, k)) for v in nonzero_data.values()]
     total_combinations = np.prod([len(p) for p in row_perms_list])
-    st.write(f"全組み合わせ（理論値）: **{int(total_combinations):,}** 通り")
+    st.write(f"理論上の全組み合わせ数: **{int(total_combinations):,}** 通り")
 
     seen = {}
     results = []
@@ -106,7 +104,7 @@ if run:
     for perm_set in itertools.product(*row_perms_list):
         checked += 1
         if checked % 1000 == 0:
-            progress.progress(checked / total_combinations)
+            progress.progress(min(checked / total_combinations, 1.0))
 
         cols = [tuple(perm[i] for perm in perm_set) for i in range(k)]
         if any(0.0 in col for col in cols):
@@ -116,15 +114,17 @@ if run:
         if key in seen:
             continue
 
-        sum_sd, sds, means, norm_cols = calc_sum_sd_from_columns(cols)
+        sum_sd, sds, means, df_raw, df_norm = calc_sum_sd_from_columns(cols)
         seen[key] = True
         results.append({
-            'sum_sd': sum_sd, 'sds': sds, 'means': means, 'columns': cols
+            'sum_sd': sum_sd, 'sds': sds, 'means': means,
+            'raw': df_raw, 'norm': df_norm
         })
 
     progress.empty()
     results.sort(key=lambda x: x['sum_sd'])
-    st.success("🎉 計算完了！")
+
+    st.success(f"🎉 計算完了！ 重複除外後の実際の組み合わせ数: **{len(results):,}**")
 
     # ----------------------------------------
     # 🏆 結果表示
@@ -138,12 +138,10 @@ if run:
         st.subheader(f"🏅 Rank {i+1} — Sum_SD: {r['sum_sd']:.6f}")
         st.write(f"**SDs:** {', '.join(f'{v:.3f}' for v in r['sds'])}")
         st.write(f"**Means:** {', '.join(f'{v:.3f}' for v in r['means'])}")
-        df_raw = pd.DataFrame(r["columns"], columns=labels)
-        df_norm = pd.DataFrame(r["columns"], columns=labels).apply(lambda c: c / c.iloc[0] * 100)
         st.write("**Raw 値:**")
-        st.dataframe(df_raw.style.format(precision=3), use_container_width=True)
-        st.write("**Normalized（条件1=100）:**")
-        st.dataframe(df_norm.style.format(precision=3), use_container_width=True)
+        st.dataframe(r["raw"].style.format(precision=3), use_container_width=True)
+        st.write("**Normalized（条件A=100基準）:**")
+        st.dataframe(r["norm"].style.format(precision=3), use_container_width=True)
 
     # ----------------------------------------
     # 📊 Excel 出力
@@ -157,7 +155,6 @@ if run:
         "Sum_SD": r["sum_sd"],
         "SDs": ", ".join([f"{v:.4f}" for v in r["sds"]]),
         "Means": ", ".join([f"{v:.4f}" for v in r["means"]]),
-        "Columns": str(r["columns"])
     } for i, r in enumerate(results[:topn])])
 
     for row in dataframe_to_rows(df, index=False, header=True):
@@ -170,9 +167,9 @@ if run:
     st.download_button(
         "⬇️ Excel で結果をダウンロード",
         output,
-        file_name="DotBlot_Final.xlsx",
+        file_name="DotBlot_Final_v2.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
 
-    st.markdown("<h2 style='text-align:center; color:#ff66b2;'>✨ 最終版が完成しました ✨</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align:center; color:#ff66b2;'>✨ 条件A基準の最終版が完成しました ✨</h2>", unsafe_allow_html=True)
